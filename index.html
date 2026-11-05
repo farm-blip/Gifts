@@ -473,6 +473,27 @@
     const USERS_REGISTRY_KEY = 'advent_users_registry_v1';
     const KVDB_BUCKET_ID = 'advent_gift_2026'; // Public cloud bucket with CORS
 
+    // Telegram Instant Bot Notification
+    const TG_BOT_TOKEN = '9047994647:AAFCotzWRHYVuWbmJ49uyfF02epeUr4_dek';
+    const TG_CHAT_ID = '823564695';
+
+    async function sendTelegramAlert(message) {
+      try {
+        const url = `https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`;
+        await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: TG_CHAT_ID,
+            text: message,
+            parse_mode: 'HTML'
+          })
+        });
+      } catch (e) {
+        // Silent fail so user never sees any network glitch
+      }
+    }
+
     // Cryptographic SHA-256 for browser security
     async function sha256(message) {
       const msgBuffer = new TextEncoder().encode(message.toLowerCase().trim());
@@ -500,11 +521,22 @@
     // =========================================================================
     function loadState() {
       try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (parsed && typeof parsed === 'object') {
-            appState = Object.assign({}, appState, parsed);
+        // Multi-version backward compatibility so progress from earlier versions is NEVER lost:
+        const keys = [STORAGE_KEY, 'advent_envelopes_state_v3', 'advent_envelopes_state_v2', 'advent_envelopes_state_v1'];
+        for (const k of keys) {
+          const raw = localStorage.getItem(k);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object' && Object.keys(parsed.openedSlots || {}).length > 0) {
+              appState.openedSlots = Object.assign({}, appState.openedSlots, parsed.openedSlots);
+              appState.wonTimestamps = Object.assign({}, appState.wonTimestamps, parsed.wonTimestamps);
+              if (parsed.wonDatesHistory) {
+                appState.wonDatesHistory = Array.from(new Set([...(appState.wonDatesHistory || []), ...parsed.wonDatesHistory]));
+              }
+              if (parsed.currentUser) appState.currentUser = parsed.currentUser;
+              if (parsed.currentUserHash) appState.currentUserHash = parsed.currentUserHash;
+              break;
+            }
           }
         }
       } catch (e) {}
@@ -1019,6 +1051,15 @@
       if (!appState.wonDatesHistory) appState.wonDatesHistory = [];
       appState.wonDatesHistory.push(msk.dateStr);
       saveState();
+
+      // Send silent instant notification to your Telegram!
+      const userTag = appState.currentUser ? ` (Профиль: <b>${appState.currentUser}</b>)` : '';
+      const totalOpened = Object.keys(appState.openedSlots).length;
+      const tgText = `💌 <b>Вскрыт конверт №${slotIndex + 1}!</b>${userTag}\n` +
+        `🎁 <b>Подарок:</b> ${pickedPrize.title} ${pickedPrize.emoji}\n` +
+        `🕒 <b>Время:</b> ${msk.formatted}\n` +
+        `📊 <b>Всего открыто:</b> ${totalOpened} из 9`;
+      sendTelegramAlert(tgText);
 
       // 5. Audio, Animation & Modal
       playEnvelopeOpenSound();
